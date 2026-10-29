@@ -1,0 +1,142 @@
+# ============================================================================
+# ✂️ UPLOAD AUDIO → SPLIT BY SRT (no broken phrases) → AUTO-UPLOAD VIA SFTP
+# ============================================================================
+!pip install -q pysrt paramiko
+
+import pysrt
+import subprocess
+import os
+import paramiko
+from google.colab import files, userdata
+
+# ----------------------------------------------------------------------------
+# 🔐 SFTP CONFIGURATION (пароль берется из секретов Colab)
+# ----------------------------------------------------------------------------
+SFTP_HOST   = "lepka-iz-plastilina.ru.net"
+SFTP_PORT   = 22
+SFTP_USER   = "root"
+SFTP_PASS   = userdata.get('SFTP_PASS')
+REMOTE_PATH = "/var/www/lepka-iz-plastilina.ru/public_html/ii/audio/"
+LOCAL_DIR   = "chunks"
+
+MAX_DURATION    = 30.0
+ALLOW_OVERSHOOT = True
+
+# ----------------------------------------------------------------------------
+# 🔧 ФУНКЦИИ
+# ----------------------------------------------------------------------------
+def upload_to_site(local_file, remote_path=REMOTE_PATH):
+    try:
+        transport = paramiko.Transport((SFTP_HOST, SFTP_PORT))
+        transport.connect(username=SFTP_USER, password=SFTP_PASS)
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        try:
+            sftp.stat(remote_path)
+        except IOError:
+            sftp.mkdir(remote_path)
+        remote_file = remote_path.rstrip("/") + "/" + os.path.basename(local_file)
+        sftp.put(local_file, remote_file)
+        
+        # Делаем файл доступным для удаления через PHP на сайте
+        try:
+            sftp.chmod(remote_file, 0o666)
+        except Exception:
+            pass
+            
+        sftp.close()
+        transport.close()
+        return f"✅ Uploaded: {remote_file}"
+    except Exception as e:
+        return f"❌ Upload error for {local_file}: {e}"
+
+def export_chunk(audio_file, start_ms, end_ms, idx, out_dir=LOCAL_DIR):
+    start_sec = start_ms / 1000.0
+    end_sec   = end_ms   / 1000.0
+    output_name = os.path.join(out_dir, f"{idx}.wav")
+    cmd = ["ffmpeg", "-y", "-i", audio_file,
+           "-ss", str(start_sec), "-to", str(end_sec), output_name]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return output_name, start_sec, end_sec
+
+def build_groups(srt_file):
+    subs = pysrt.open(srt_file)
+    groups, cur_start, cur_end = [], None, None
+    for sub in subs:
+        s_start, s_end = sub.start.ordinal, sub.end.ordinal
+        dur = (s_end - s_start) / 1000.0
+
+        if dur > MAX_DURATION:
+            if cur_start is not None:
+                groups.append((cur_start, cur_end)); cur_start = cur_end = None
+            if ALLOW_OVERSHOOT:
+                groups.append((s_start, s_end))
+            else:
+                t = s_start
+                while t < s_end:
+                    t2 = min(t + int(MAX_DURATION * 1000), s_end)
+                    groups.append((t, t2)); t = t2
+            continue
+
+        if cur_start is None:
+            cur_start, cur_end = s_start, s_end
+        else:
+            if (s_end - cur_start) / 1000.0 <= MAX_DURATION:
+                cur_end = s_end
+            else:
+                groups.append((cur_start, cur_end))
+                cur_start, cur_end = s_start, s_end
+
+    if cur_start is not None:
+        groups.append((cur_start, cur_end))
+    return groups
+
+# ----------------------------------------------------------------------------
+# 🚀 ОСНОВНОЙ ПРОЦЕСС
+# ----------------------------------------------------------------------------
+print("📥 Выберите аудиофайл для загрузки...")
+uploaded_files = files.upload()
+
+if not uploaded_files:
+    print("❌ Файл не выбран.")
+else:
+    # Берем первый загруженный файл
+    fname = list(uploaded_files.keys())[0]
+    print(f"✅ Файл загружен: {fname}")
+    
+    base = os.path.splitext(fname)[0]
+    srt_file = base + ".srt"
+
+    # 1. Whisper → SRT
+    print(f"\n🎙️ Запуск Whisper (модель: small, язык: en)...")
+    cmd = ["whisper", fname, "--model", "small", "--output_format", "srt", "--language", "en"]
+    subprocess.run(cmd, check=True)
+    
+    if not os.path.exists(srt_file):
+        raise FileNotFoundError(f"SRT не создан: {srt_file}")
+    print(f"✅ Субтитры созданы: {srt_file}")
+
+    # 2. Нарезка и загрузка
+    print("\n✂️ Нарезка аудио по фразам...")
+    groups = build_groups(srt_file)
+    print(f"🧩 Кусков к созданию: {len(groups)}\n")
+
+    os.makedirs(LOCAL_DIR, exist_ok=True)
+    uploaded_chunks = []
+    
+    for i, (a, b) in enumerate(groups, start=1):
+        path, s, e = export_chunk(fname, a, b, i)
+        print(f"[{i}] {os.path.basename(path)}  {s:.2f}s–{e:.2f}s  ({e-s:.2f}s)")
+        
+        res = upload_to_site(path)
+        print("   ", res)
+        
+        if res.startswith("✅"):
+            uploaded_chunks.append(os.path.basename(path))
+
+    # 3. Итог
+    print("\n" + "=" * 60)
+    print(f"🎉 Готово. Кусков: {len(groups)}, загружено: {len(uploaded_chunks)}")
+    print(f"📁 https://lepka-iz-plastilina.ru.net/ii/audio/")
+    for name in uploaded_chunks:
+        print(f"  • https://lepka-iz-plastilina.ru.net/ii/audio/{name}")
+    print("=" * 60)
