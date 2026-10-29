@@ -1,66 +1,18 @@
 {
  "cells": [
   {
-   "cell_type": "markdown",
-   "metadata": {
-    "id": "split-audio-title"
-   },
-   "source": [
-    "# ✂️ Audio Splitter + Auto-Upload to Website\n",
-    "\n",
-    "**Whisper Transcription + FFmpeg Splitting + SFTP Auto-Upload**\n",
-    "\n",
-    "## ✅ Features:\n",
-    "- **Whisper** для автоматической транскрипции (создание SRT)\n",
-    "- **Умная нарезка** по фразам (без обрывания слов, до 30 сек)\n",
-    "- **Авто-загрузка** всех кусков на сайт через SFTP\n",
-    "- **Установка прав** (chmod 666), чтобы сайт мог удалять файлы\n",
-    "\n",
-    "## 🔐 Setup\n",
-    "\n",
-    "Перед запуском добавьте пароль в Colab Secrets:\n",
-    "1. Нажмите 🔑 (иконка ключа) в левой панели Colab\n",
-    "2. Добавьте секрет с именем: `SFTP_PASS`\n",
-    "3. Значение: ваш пароль SFTP\n",
-    "4. Включите \"Notebook access\"\n",
-    "\n",
-    "## 🚀 Инструкция\n",
-    "1. Запустите первую ячейку (установка).\n",
-    "2. Запустите вторую ячейку — появится кнопка загрузки файла.\n",
-    "3. Выберите аудиофайл. Скрипт сам сделает нарезку и загрузит куски на сайт."
-   ]
-  },
-  {
    "cell_type": "code",
    "execution_count": null,
    "metadata": {
-    "id": "install-deps"
+    "id": "narzka-all-in-one"
    },
    "outputs": [],
    "source": [
     "# ============================================================================\n",
     "# 📦 INSTALL DEPENDENCIES\n",
     "# ============================================================================\n",
-    "print(\"=\" * 80)\n",
-    "print(\"📦 INSTALLING DEPENDENCIES\")\n",
-    "print(\"=\" * 80)\n",
-    "\n",
     "!pip install -q pysrt paramiko openai-whisper\n",
     "\n",
-    "print(\"✅ Dependencies installed\")"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {
-    "id": "launch-splitter"
-   },
-   "outputs": [],
-   "source": [
-    "# ============================================================================\n",
-    "# 🚀 AUDIO SPLITTER + AUTO-UPLOAD VIA SFTP\n",
-    "# ============================================================================\n",
     "import pysrt\n",
     "import subprocess\n",
     "import os\n",
